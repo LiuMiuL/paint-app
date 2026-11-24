@@ -131,9 +131,11 @@
     pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     if (saved) {
+      // 비트맵은 기기 픽셀 단위이므로 변환 없이(identity) 같은 배율로 되살린다.
+      const scale = dpr / savedDpr;
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.drawImage(saved, 0, 0, saved.width / savedDpr, saved.height / savedDpr);
+      ctx.drawImage(saved, 0, 0, saved.width * scale, saved.height * scale);
       ctx.restore();
     }
     state.lastMid = null;
@@ -640,7 +642,8 @@
   board.addEventListener('pointerup', onPointerUp);
   board.addEventListener('pointercancel', onPointerCancel);
   board.addEventListener('lostpointercapture', (e) => {
-    if (state.pointerId === e.pointerId) resetPointer();
+    if (state.pointerId !== e.pointerId) return;
+    onPointerCancel(e);   // 캡처를 잃어도 그린 획은 연산으로 남긴다
   });
   board.addEventListener('contextmenu', (e) => e.preventDefault());
   board.addEventListener('dragstart', (e) => e.preventDefault());
