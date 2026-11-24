@@ -2,7 +2,7 @@
 
 모바일과 PC에서 바로 쓰는 한국어 그림판 PWA입니다. 빌드 도구나 외부 CDN 없이 순수 HTML/CSS/JS로만 동작하며, 설치하면 오프라인에서도 열립니다.
 
-- 배포 주소: <https://liumiul.github.io/paint-app/>
+- 배포 주소: <https://liumiul.github.io/paint-app/> (저장소 Settings → Pages에서 Source를 `main` / `/ (root)`로 설정하면 열립니다)
 - 저장소: <https://github.com/LiuMiuL/paint-app>
 
 ## 기능
@@ -80,7 +80,7 @@ python3 -m http.server 8000
 
 ## 배포
 
-`main` 브랜치에 푸시하면 GitHub Pages(<https://liumiul.github.io/paint-app/>)에 자동 반영됩니다.
+`main` 브랜치에 푸시하면 GitHub Pages(<https://liumiul.github.io/paint-app/>)에 자동 반영됩니다. Pages가 아직 꺼져 있다면 저장소 Settings → Pages에서 Source를 `main` / `/ (root)`로 한 번만 지정하면 됩니다.
 
 ## 알려진 제한
 
