@@ -160,6 +160,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   touch-action: none;
 }
 
+/* 확대·이동은 .wrap 에 transform 만 건다 (그림 좌표는 그대로) */
 .stage canvas {
   position: absolute;
   inset: 0;
