@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <title>그림판</title>
-<meta name="description" content="손끝으로 그리는 그림판 — 펜, 형광펜, 도형, 채우기, PNG 저장. 설치 없이 바로 쓰는 PWA.">
+<meta name="description" content="손끝으로 그리는 그림판 — 펜, 형광펜, 도형, 채우기, 글자, 스포이트, 사진 위에 그리기, PNG 저장·공유. 설치 없이 바로 쓰는 PWA.">
 <meta name="theme-color" content="#eef1f6">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -24,6 +24,14 @@
       <h1>그림판</h1>
     </div>
     <div class="actions">
+      <button type="button" class="icon-btn" id="importBtn" aria-label="사진 불러오기" title="사진 불러오기 (Ctrl+O)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/>
+          <path d="m4 17.5 4.6-4.6a1.6 1.6 0 0 1 2.3 0l1.6 1.6 2.6-2.6a1.6 1.6 0 0 1 2.3 0l3.1 3.1"/>
+        </svg>
+      </button>
+      <input type="file" id="imageInput" accept="image/*" hidden>
+      <span class="divider" aria-hidden="true"></span>
       <button type="button" class="icon-btn" id="undoBtn" aria-label="실행 취소" title="실행 취소 (Ctrl+Z)" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H12"/>
@@ -41,6 +49,12 @@
           <path d="M9.5 7V5.2A2.2 2.2 0 0 1 11.7 3h.6a2.2 2.2 0 0 1 2.2 2.2V7"/>
         </svg>
       </button>
+      <button type="button" class="icon-btn" id="shareBtn" aria-label="공유하기" title="공유하기" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3.5v11"/><path d="m7.5 8 4.5-4.5L16.5 8"/>
+          <path d="M8 11.5H6.5a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H16"/>
+        </svg>
+      </button>
       <button type="button" class="icon-btn primary" id="saveBtn" aria-label="PNG로 저장" title="PNG로 저장 (Ctrl+S)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 3.5v11"/><path d="m7 10 5 5 5-5"/><path d="M4.5 20.5h15"/>
@@ -52,6 +66,7 @@
   <main class="stage" id="stage">
     <canvas id="board" aria-label="그림을 그리는 캔버스" role="img"></canvas>
     <canvas id="preview" aria-hidden="true"></canvas>
+    <input type="text" class="text-editor" id="textEditor" aria-label="넣을 글자" placeholder="글자 입력" enterkeyhint="done" autocomplete="off" spellcheck="false" hidden>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </main>
 
@@ -60,6 +75,12 @@
     <label class="color-chip" title="직접 색 고르기">
       <input type="color" id="colorInput" value="#111827" aria-label="직접 색 고르기">
     </label>
+    <button type="button" class="opt-btn" id="shapeFillBtn" aria-pressed="false" aria-label="도형 안쪽 채우기" title="도형 안쪽 채우기 (F)" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">
+        <rect class="fill-mark" x="4.5" y="5.5" width="15" height="13" rx="2"/>
+      </svg>
+      <span>채움</span>
+    </button>
     <div class="size-control">
       <span class="size-dot" id="sizeDot" aria-hidden="true"></span>
       <input type="range" id="sizeSlider" min="1" max="80" step="1" value="6" aria-label="붓 굵기">
@@ -113,6 +134,19 @@
         <path d="M19.6 13.4s1.6 2.1 1.6 3.1a1.6 1.6 0 0 1-3.2 0c0-1 1.6-3.1 1.6-3.1z"/>
       </svg>
       <span>채우기</span>
+    </button>
+    <button type="button" class="tool" data-tool="text" aria-pressed="false" aria-label="글자" title="글자 (T)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 7V5h14v2"/><path d="M12 5v14"/><path d="M9 19h6"/>
+      </svg>
+      <span>글자</span>
+    </button>
+    <button type="button" class="tool" data-tool="picker" aria-pressed="false" aria-label="스포이트 — 그림에서 색 고르기" title="스포이트 (I)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m14.5 6.5 3 3"/><path d="M16.2 4.4a2.1 2.1 0 0 1 3 3l-1.7 1.7-3-3z"/>
+        <path d="m14.5 6.5-8.6 8.6a2 2 0 0 0-.5.9L4.5 19.5l3.5-.9a2 2 0 0 0 .9-.5l8.6-8.6"/>
+      </svg>
+      <span>스포이트</span>
     </button>
   </nav>
 

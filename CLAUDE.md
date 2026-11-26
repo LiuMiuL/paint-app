@@ -25,12 +25,16 @@
 상수        PAPER, MAX_HISTORY(80), FILL_TOLERANCE, PALETTE, TOOLS
 state       tool, color, size, dpr, ops[], index, 진행 중 포인터 상태
 캔버스 크기  resizeCanvases() — devicePixelRatio 반영, 크기 변경 시 내용 보존
-그리기      applyStyle, segWidth, drawDot, drawStroke, drawShape
+그리기      applyStyle, segWidth, drawDot, drawStroke, drawShape, drawText, drawImageOp
 페인트통    floodFill(x, y, color) — 스캔라인, 픽셀 단위
-히스토리    pushOp, paintOp, replay, undo, redo, trimHistory
-저장        savePNG — 흰 배경 위에 합성 후 toBlob
-입력        onPointerDown/Move/Up/Cancel, addPoint, drawPreview
-UI          setTool, setColor, updateSizeDot, 단축키
+히스토리    pushOp, paintOp, replay, undo, redo, trimHistory(오래된 연산 → base 캔버스로 굳힘)
+저장·공유   renderPNG, savePNG, sharePNG(Web Share API, 지원 기기에서만 버튼 노출)
+사진        importImage — 화면 해상도로 줄인 캔버스를 image 연산에 보관
+글자        openTextEditor, commitText, cancelText — #textEditor 입력칸
+스포이트    pickColorAt — 흰 종이 위 색으로 환산
+입력        onPointerDown/Move/Up/Cancel, addPoint, drawPreview,
+            두 손가락 탭 제스처(startGesture, gestureMove, gestureEnd — window에서 받음)
+UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 ```
 
 ### 좌표 규칙 (중요)
@@ -44,18 +48,22 @@ UI          setTool, setColor, updateSizeDot, 단축키
 | type | 필드 |
 | --- | --- |
 | `stroke` | `tool`, `color`, `size`, `pressure`(bool), `points[{x, y, p}]` |
-| `shape` | `tool`(line/rect/ellipse), `color`, `size`, `start{x,y}`, `end{x,y}`, `square` |
+| `shape` | `tool`(line/rect/ellipse), `color`, `size`, `start{x,y}`, `end{x,y}`, `square`, `filled` |
 | `fill` | `x`, `y`, `color` |
+| `text` | `x`, `y`(글줄 왼쪽-세로 가운데), `text`, `color`, `size` |
+| `image` | `src`(캔버스), `x`, `y`, `w`, `h` |
 | `clear` | — |
 
 - 새 기능도 **연산으로 표현**해야 실행 취소가 됩니다. 비트맵을 직접 바꾸고 연산을 남기지 않으면 되돌릴 수 없습니다.
 - 실시간으로 그리는 모양과 `replay()` 결과가 같아야 합니다. `drawStroke`를 실시간 경로에서도 재사용하거나, 같은 순서로 세그먼트를 그리세요.
+- 캔버스에 먼저 그린 **다음** `pushOp`를 부르세요. `pushOp` 안의 `trimHistory`가 화면을 다시 재생할 수 있습니다.
+- 채우기·글자·스포이트처럼 한 번 누르는 도구는 `TAP_TOOLS`에 넣어 **손을 뗄 때** 실행합니다(두 손가락 탭과 구분).
 
 ## 새 도구 추가 절차
 
 1. `TOOLS`에 `{ label, width, alpha, composite, cursor }` 추가
 2. `index.html` 도구바에 `<button class="tool" data-tool="새도구">` 추가 (아이콘 SVG + 한국어 라벨)
-3. 필요하면 `styles.css` `.toolbar`의 `grid-template-columns: repeat(7, …)` 개수 수정
+3. `styles.css` `.toolbar`의 `grid-template-columns: repeat(9, …)` 개수 수정 (360px 폭에서 라벨이 잘리지 않는지 확인)
 4. `onPointerDown`/`onPointerUp`에서 그리기 처리, 히스토리 연산은 `paintOp`에 분기 추가
 5. `KEY_TOOLS`에 단축키 등록, README 단축키 표 갱신
 
