@@ -52,7 +52,12 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 | `fill` | `x`, `y`, `color` |
 | `text` | `x`, `y`(글줄 왼쪽-세로 가운데), `text`, `color`, `size` |
 | `image` | `src`(캔버스), `x`, `y`, `w`, `h` |
-| `clear` | — |
+| `clear` | — (모든 레이어) |
+| `xform` | `kind`(rotate `dir`±1 / flipX / flipY / scale `sx`,`sy` / crop `x`,`y`,`w`,`h`) — 모든 레이어 |
+| `bg` | `color` — 배경(종이)색 |
+
+- 그리기 연산(stroke/shape/fill/text/image)에는 `pushOp`가 `layer`(레이어 id)를 붙입니다. `paintOp(op)`는 그 레이어 캔버스에 그립니다.
+- 레이어마다 `canvas`+`base`(굳힌 바탕)를 가집니다. 입력과 미리보기는 맨 위 `#preview`가 받고, 확대/축소는 `#wrap`의 CSS transform이므로 포인터 좌표는 `state.zoom`으로 나눕니다.
 
 - 새 기능도 **연산으로 표현**해야 실행 취소가 됩니다. 비트맵을 직접 바꾸고 연산을 남기지 않으면 되돌릴 수 없습니다.
 - 실시간으로 그리는 모양과 `replay()` 결과가 같아야 합니다. `drawStroke`를 실시간 경로에서도 재사용하거나, 같은 순서로 세그먼트를 그리세요.
@@ -63,7 +68,7 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 
 1. `TOOLS`에 `{ label, width, alpha, composite, cursor }` 추가
 2. `index.html` 도구바에 `<button class="tool" data-tool="새도구">` 추가 (아이콘 SVG + 한국어 라벨)
-3. `styles.css` `.toolbar`의 `grid-template-columns: repeat(9, …)` 개수 수정 (360px 폭에서 라벨이 잘리지 않는지 확인)
+3. 툴바는 칸 최소 폭을 지키며 옆으로 스크롤되므로 CSS 수정은 필요 없음 (360px 폭에서 라벨이 잘리지 않는지 확인)
 4. `onPointerDown`/`onPointerUp`에서 그리기 처리, 히스토리 연산은 `paintOp`에 분기 추가
 5. `KEY_TOOLS`에 단축키 등록, README 단축키 표 갱신
 

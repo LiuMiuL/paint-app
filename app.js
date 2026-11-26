@@ -11,12 +11,30 @@
 
 (() => {
   // ── DOM ────────────────────────────────────────────────
-  const board = document.getElementById('board');
+  // 실제 그림은 레이어 캔버스들에 그리고, 맨 위 preview 캔버스가 입력·미리보기를 맡는다.
   const preview = document.getElementById('preview');
+  const board = preview;
   const stage = document.getElementById('stage');
+  const wrap = document.getElementById('wrap');
+  const layerBox = document.getElementById('layers');
   const toolbar = document.getElementById('toolbar');
   const swatchWrap = document.getElementById('swatches');
   const colorInput = document.getElementById('colorInput');
+  const colorBtn = document.getElementById('colorBtn');
+  const colorDialog = document.getElementById('colorDialog');
+  const colorSliders = document.getElementById('colorSliders');
+  const hexInput = document.getElementById('hexInput');
+  const colorPreview = document.getElementById('colorPreview');
+  const editBtn = document.getElementById('editBtn');
+  const editDialog = document.getElementById('editDialog');
+  const layerList = document.getElementById('layerList');
+  const bgInput = document.getElementById('bgInput');
+  const resizeUnit = document.getElementById('resizeUnit');
+  const resizeW = document.getElementById('resizeW');
+  const resizeH = document.getElementById('resizeH');
+  const resizeLock = document.getElementById('resizeLock');
+  const themeSelect = document.getElementById('themeSelect');
+  const zoomBadge = document.getElementById('zoomBadge');
   const sizeSlider = document.getElementById('sizeSlider');
   const sizeValue = document.getElementById('sizeValue');
   const sizeDot = document.getElementById('sizeDot');
@@ -31,7 +49,7 @@
   const shapeFillBtn = document.getElementById('shapeFillBtn');
   const textEditor = document.getElementById('textEditor');
 
-  const ctx = board.getContext('2d', { willReadFrequently: true });
+  let ctx = null;   // 현재 레이어의 컨텍스트 (selectLayer 에서 바뀜)
   const pctx = preview.getContext('2d');
 
   // ── 상수 ───────────────────────────────────────────────
@@ -41,6 +59,7 @@
   const MAX_POINTS = 400000;       // 점 저장량 상한(메모리 보호)
   const FILL_TOLERANCE = 40;       // 페인트통 색 허용 오차
   const MAX_DPR = 3;
+  const MAX_ZOOM = 8;
   const TAP_MS = 350;              // 두 손가락 탭으로 인정할 두 번째 손가락 도착 시간
   const TAP_MOVE = 18;             // 두 손가락 탭 중 허용 이동 거리(px)
   const FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif';
@@ -52,6 +71,8 @@
 
   const TOOLS = {
     pen:         { label: '펜',     width: (s) => s,       alpha: 1,    composite: 'source-over',    cursor: 'crosshair' },
+    brush:       { label: '붓',     width: (s) => s * 1.6, alpha: 1,    composite: 'source-over',    cursor: 'crosshair', soft: true },
+    pencil:      { label: '연필',   width: (s) => Math.max(1, s * 0.4), alpha: 1, composite: 'source-over', cursor: 'crosshair' },
     highlighter: { label: '형광펜', width: (s) => s * 2.4, alpha: 0.32, composite: 'source-over',    cursor: 'crosshair' },
     eraser:      { label: '지우개', width: (s) => s * 2.6, alpha: 1,    composite: 'destination-out', cursor: 'cell' },
     line:        { label: '직선',   width: (s) => s,       alpha: 1,    composite: 'source-over',    cursor: 'crosshair' },
@@ -60,8 +81,12 @@
     fill:        { label: '채우기', width: (s) => s,       alpha: 1,    composite: 'source-over',    cursor: 'copy' },
     text:        { label: '글자',   width: (s) => s,       alpha: 1,    composite: 'source-over',    cursor: 'text' },
     picker:      { label: '스포이트', width: (s) => s,     alpha: 1,    composite: 'source-over',    cursor: 'crosshair' },
+    crop:        { label: '자르기', width: (s) => s,       alpha: 1,    composite: 'source-over',    cursor: 'crosshair' },
   };
-  const SHAPE_TOOLS = new Set(['line', 'rect', 'ellipse']);
+  // 끌어서 영역을 정하는 도구 (자르기도 같은 흐름을 쓴다)
+  const SHAPE_TOOLS = new Set(['line', 'rect', 'ellipse', 'crop']);
+  // 특정 레이어에 그려지는 연산
+  const LAYER_OPS = new Set(['stroke', 'shape', 'fill', 'text', 'image']);
   const FILLABLE_SHAPES = new Set(['rect', 'ellipse']);
   // 누를 때가 아니라 손을 뗄 때 실행하는 도구 (두 손가락 탭과 구분하기 위해)
   const TAP_TOOLS = new Set(['fill', 'text', 'picker']);
@@ -89,12 +114,19 @@
     prevTool: 'pen',  // 스포이트 사용 후 돌아갈 도구
     pickColorBefore: null,
     dirty: false,     // 저장 이후 바뀐 내용이 있는지
+    paper: PAPER,     // 배경색 (bg 연산으로 바뀜)
+    basePaper: PAPER, // 바탕 그림에 굳혀진 시점의 배경색
+    zoom: 1,
+    panX: 0,
+    panY: 0,
   };
 
-  // 히스토리에서 밀려난 오래된 연산을 굳혀 두는 바탕 그림 (기기 픽셀 단위)
-  const base = document.createElement('canvas');
-  const bctx = base.getContext('2d');
-  let baseEmpty = true;
+  // ── 레이어 ─────────────────────────────────────────────
+  // 레이어마다 캔버스 하나 + 히스토리에서 밀려난 연산을 굳혀 두는 바탕 그림(base) 하나.
+  // 화면 합성은 DOM 순서와 CSS opacity 에 맡기고, 저장·스포이트만 직접 합성한다.
+  const layers = [];   // 아래 → 위
+  let active = null;
+  let layerSeq = 0;
 
   // 두 손가락(세 손가락) 탭 제스처
   let gesture = null;      // { pos: Map<id,{x,y}>, max, start, moved }
@@ -112,6 +144,32 @@
       : { r: 0, g: 0, b: 0 };
     rgbCache.set(hex, rgb);
     return rgb;
+  }
+
+  const toHex = (r, g, b) => '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('');
+
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    let h = 0;
+    if (d) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return { h: Math.round(h), s: Math.round(max ? (d / max) * 100 : 0), v: Math.round(max * 100) };
+  }
+
+  function hsvToRgb(h, s, v) {
+    s /= 100; v /= 100;
+    const f = (n) => {
+      const k = (n + h / 60) % 6;
+      return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255);
+    };
+    return { r: f(5), g: f(3), b: f(1) };
   }
 
   let toastTimer = 0;
@@ -137,21 +195,27 @@
     const bitmapW = Math.round(cssW * dpr);
     const bitmapH = Math.round(cssH * dpr);
 
-    if (board.width === bitmapW && board.height === bitmapH) return;
+    if (preview.width === bitmapW && preview.height === bitmapH) return;
 
     // 크기가 바뀌기 전 그림을 보관해 두었다가 같은 위치에 되살린다.
     const scale = dpr / state.dpr;
-    resizeKeeping(board, ctx, bitmapW, bitmapH, scale);
-    if (!baseEmpty) resizeKeeping(base, bctx, bitmapW, bitmapH, scale);
-    else { base.width = bitmapW; base.height = bitmapH; }
+    for (const L of layers) {
+      resizeKeeping(L.canvas, L.ctx, bitmapW, bitmapH, scale);
+      if (!L.baseEmpty) resizeKeeping(L.base, L.bctx, bitmapW, bitmapH, scale);
+      else { L.base.width = bitmapW; L.base.height = bitmapH; }
+      L.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
     preview.width = bitmapW;
     preview.height = bitmapH;
     state.dpr = dpr;
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     state.lastMid = null;
+    applyView();
   }
+
+  const cssW = () => preview.width / state.dpr;
+  const cssH = () => preview.height / state.dpr;
 
   /** 캔버스 크기를 바꾸면서 기존 비트맵을 같은 배율로 되살린다. */
   function resizeKeeping(cv, c, w, h, scale) {
@@ -184,6 +248,148 @@
   window.addEventListener('resize', scheduleResize);
   window.addEventListener('orientationchange', scheduleResize);
 
+  // ── 레이어 관리 ──────────────────────────────────────
+  function makeLayer() {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'layer';
+    canvas.width = preview.width;
+    canvas.height = preview.height;
+    const base = document.createElement('canvas');
+    base.width = preview.width;
+    base.height = preview.height;
+    const L = {
+      id: ++layerSeq,
+      name: `레이어 ${layerSeq}`,
+      canvas,
+      ctx: canvas.getContext('2d', { willReadFrequently: true }),
+      base,
+      bctx: base.getContext('2d'),
+      baseEmpty: true,
+      opacity: 1,
+      visible: true,
+    };
+    L.ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    return L;
+  }
+
+  const layerById = (id) => layers.find((L) => L.id === id);
+
+  /** DOM 순서·투명도·보이기를 layers 배열에 맞춘다. */
+  function syncLayers() {
+    for (const L of layers) {
+      layerBox.appendChild(L.canvas);
+      L.canvas.style.opacity = String(L.opacity);
+      L.canvas.hidden = !L.visible;
+    }
+    renderLayerList();
+  }
+
+  function selectLayer(L) {
+    if (!L) return;
+    commitText();
+    active = L;
+    ctx = L.ctx;
+    renderLayerList();
+  }
+
+  function addLayer() {
+    const L = makeLayer();
+    layers.splice(active ? layers.indexOf(active) + 1 : layers.length, 0, L);
+    syncLayers();
+    selectLayer(L);
+  }
+
+  function moveLayer(L, dir) {
+    const i = layers.indexOf(L);
+    const j = i + dir;
+    if (j < 0 || j >= layers.length) return;
+    [layers[i], layers[j]] = [layers[j], layers[i]];
+    syncLayers();
+  }
+
+  function deleteLayer(L) {
+    if (layers.length < 2) { toast('레이어는 하나 이상 있어야 해요'); return; }
+    if (!window.confirm(`${L.name}을(를) 삭제할까요? 이 레이어의 실행 취소 기록도 함께 사라져요.`)) return;
+    commitText();
+    // 이 레이어에 그린 연산을 히스토리에서 빼고, 현재 위치를 다시 맞춘다.
+    const kept = [];
+    let index = -1;
+    state.ops.forEach((op, i) => {
+      if (op.layer === L.id) return;
+      kept.push(op);
+      if (i <= state.index) index = kept.length - 1;
+    });
+    state.ops = kept;
+    state.index = index;
+    const at = layers.indexOf(L);
+    layers.splice(at, 1);
+    L.canvas.remove();
+    if (active === L) active = layers[Math.max(0, at - 1)];
+    syncLayers();
+    selectLayer(active);
+    updateHistoryButtons();
+  }
+
+  function renderLayerList() {
+    if (!layerList) return;
+    layerList.textContent = '';
+    for (const L of [...layers].reverse()) {           // 위 레이어가 목록 위에
+      const row = document.createElement('div');
+      row.className = 'layer-row' + (L === active ? ' is-active' : '');
+      row.dataset.id = String(L.id);
+      row.innerHTML = `
+        <button type="button" class="layer-name" data-act="select" aria-pressed="${L === active}">${L.name}</button>
+        <label class="layer-vis" title="보이기"><input type="checkbox" data-act="visible" ${L.visible ? 'checked' : ''} aria-label="${L.name} 보이기">보이기</label>
+        <input type="range" min="0" max="100" value="${Math.round(L.opacity * 100)}" data-act="opacity" aria-label="${L.name} 투명도" title="투명도">
+        <button type="button" class="mini-btn" data-act="up" aria-label="${L.name} 위로" title="위로">▲</button>
+        <button type="button" class="mini-btn" data-act="down" aria-label="${L.name} 아래로" title="아래로">▼</button>
+        <button type="button" class="mini-btn" data-act="del" aria-label="${L.name} 삭제" title="삭제">✕</button>`;
+      layerList.appendChild(row);
+    }
+  }
+
+  /** 보이는 레이어를 배경색 위에 합성한다. 영역을 주면 그 부분만 (기기 픽셀). */
+  function composite(sx = 0, sy = 0, w = preview.width, h = preview.height) {
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = h;
+    const o = out.getContext('2d', { willReadFrequently: true });
+    o.fillStyle = state.paper;
+    o.fillRect(0, 0, w, h);
+    for (const L of layers) {
+      if (!L.visible || !L.opacity) continue;
+      o.globalAlpha = L.opacity;
+      o.drawImage(L.canvas, sx, sy, w, h, 0, 0, w, h);
+    }
+    return out;
+  }
+
+  function setPaper(color) {
+    state.paper = color;
+    stage.style.background = color;
+    bgInput.value = color;
+  }
+
+  // ── 확대/축소 · 이동 (보기만 바뀌고 그림은 그대로) ──────
+  function applyView() {
+    const z = state.zoom;
+    state.panX = Math.min(0, Math.max(cssW() * (1 - z), state.panX));
+    state.panY = Math.min(0, Math.max(cssH() * (1 - z), state.panY));
+    wrap.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${z})`;
+    zoomBadge.hidden = z === 1;
+    zoomBadge.textContent = `${Math.round(z * 100)}%`;
+  }
+
+  /** (cx, cy) — 화면(stage) 기준 점이 제자리에 있도록 배율을 바꾼다. */
+  function setZoom(z, cx = cssW() / 2, cy = cssH() / 2) {
+    z = Math.min(MAX_ZOOM, Math.max(1, z));
+    const k = z / state.zoom;
+    state.panX = cx - (cx - state.panX) * k;
+    state.panY = cy - (cy - state.panY) * k;
+    state.zoom = z;
+    applyView();
+  }
+
   // ── 그리기 기본기 ──────────────────────────────────────
   function applyStyle(c, op) {
     const t = TOOLS[op.tool];
@@ -193,6 +399,9 @@
     c.fillStyle = op.color;
     c.lineCap = 'round';
     c.lineJoin = 'round';
+    // 붓: 가장자리를 부드럽게 (shadowBlur는 변환을 받지 않아 기기 픽셀로 준다)
+    c.shadowBlur = t.soft ? op.size * 0.7 * state.dpr : 0;
+    c.shadowColor = t.soft ? op.color : 'transparent';
   }
 
   function segWidth(op, point) {
@@ -310,11 +519,54 @@
     c.restore();
   }
 
-  function clearBoard() {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, board.width, board.height);
-    ctx.restore();
+  function clearLayer(L) {
+    L.ctx.save();
+    L.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    L.ctx.clearRect(0, 0, L.canvas.width, L.canvas.height);
+    L.ctx.restore();
+  }
+
+  /** 회전·대칭·크기 조정·자르기: 레이어 비트맵을 통째로 바꾼다. */
+  function transformLayer(L, op) {
+    const cv = L.canvas;
+    const w = cv.width;
+    const h = cv.height;
+    const d = state.dpr;
+    if (!w || !h) return;
+    const tmp = document.createElement('canvas');
+    tmp.width = w;
+    tmp.height = h;
+    tmp.getContext('2d').drawImage(cv, 0, 0);
+    const c = L.ctx;
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.clearRect(0, 0, w, h);
+    c.imageSmoothingQuality = 'high';
+    if (op.kind === 'rotate') {
+      // 90° 돌리면 가로·세로가 바뀌므로 그림 전체가 보이게 줄여서 가운데에 둔다.
+      const k = Math.min(w / h, h / w);
+      c.translate(w / 2, h / 2);
+      c.rotate((op.dir * Math.PI) / 2);
+      c.scale(k, k);
+      c.drawImage(tmp, -w / 2, -h / 2);
+    } else if (op.kind === 'flipX') {
+      c.translate(w, 0);
+      c.scale(-1, 1);
+      c.drawImage(tmp, 0, 0);
+    } else if (op.kind === 'flipY') {
+      c.translate(0, h);
+      c.scale(1, -1);
+      c.drawImage(tmp, 0, 0);
+    } else if (op.kind === 'scale') {
+      c.drawImage(tmp, 0, 0, w * op.sx, h * op.sy);
+    } else if (op.kind === 'crop') {
+      // 고른 영역을 캔버스에 꽉 차게(비율 유지) 가운데로 키운다.
+      const k = Math.min(w / (op.w * d), h / (op.h * d));
+      const dw = op.w * d * k;
+      const dh = op.h * d * k;
+      c.drawImage(tmp, op.x * d, op.y * d, op.w * d, op.h * d, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    }
+    c.restore();
   }
 
   function clearPreview() {
@@ -325,15 +577,16 @@
   }
 
   // ── 페인트통 (Flood Fill, 스캔라인) ────────────────────
-  function floodFill(x, y, color) {
-    const w = board.width;
-    const h = board.height;
+  function floodFill(L, x, y, color) {
+    const c0 = L.ctx;
+    const w = L.canvas.width;
+    const h = L.canvas.height;
     if (!w || !h) return false;
     const sx = Math.floor(x * state.dpr);
     const sy = Math.floor(y * state.dpr);
     if (sx < 0 || sy < 0 || sx >= w || sy >= h) return false;
 
-    const img = ctx.getImageData(0, 0, w, h);
+    const img = c0.getImageData(0, 0, w, h);
     const d = img.data;
     const seen = new Uint8Array(w * h);
 
@@ -397,36 +650,44 @@
 
     if (!filled) return false;
 
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.putImageData(img, 0, 0);
-    ctx.restore();
+    c0.save();
+    c0.setTransform(1, 0, 0, 1, 0, 0);
+    c0.putImageData(img, 0, 0);
+    c0.restore();
     return true;
   }
 
   // ── 연산 재생 / 히스토리 ───────────────────────────────
-  function paintOp(c, op) {
+  function paintOp(op) {
+    if (op.type === 'clear') { layers.forEach(clearLayer); return; }
+    if (op.type === 'xform') { for (const L of layers) transformLayer(L, op); return; }
+    if (op.type === 'bg') { setPaper(op.color); return; }
+    const L = layerById(op.layer);
+    if (!L) return;
+    const c = L.ctx;
     if (op.type === 'stroke') drawStroke(c, op);
     else if (op.type === 'shape') drawShape(c, op);
-    else if (op.type === 'fill') floodFill(op.x, op.y, op.color);
+    else if (op.type === 'fill') floodFill(L, op.x, op.y, op.color);
     else if (op.type === 'text') drawText(c, op);
     else if (op.type === 'image') drawImageOp(c, op);
-    else if (op.type === 'clear') clearBoard();
   }
 
   /** 바탕 그림(히스토리에서 밀려난 연산의 결과)을 깔고 시작한다. */
   function drawBase() {
-    clearBoard();
-    if (baseEmpty) return;
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(base, 0, 0);
-    ctx.restore();
+    setPaper(state.basePaper);
+    for (const L of layers) {
+      clearLayer(L);
+      if (L.baseEmpty) continue;
+      L.ctx.save();
+      L.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      L.ctx.drawImage(L.base, 0, 0);
+      L.ctx.restore();
+    }
   }
 
   function replay() {
     drawBase();
-    for (let i = 0; i <= state.index; i++) paintOp(ctx, state.ops[i]);
+    for (let i = 0; i <= state.index; i++) paintOp(state.ops[i]);
     clearPreview();
   }
 
@@ -448,18 +709,22 @@
 
     // 바탕 + 앞쪽 drop개 → 새 바탕, 이어서 나머지를 재생해 화면을 원래대로 맞춘다.
     drawBase();
-    for (let i = 0; i < drop; i++) paintOp(ctx, state.ops[i]);
-    base.width = board.width;
-    base.height = board.height;
-    bctx.drawImage(board, 0, 0);
-    baseEmpty = false;
-    for (let i = drop; i <= state.index; i++) paintOp(ctx, state.ops[i]);
+    for (let i = 0; i < drop; i++) paintOp(state.ops[i]);
+    for (const L of layers) {
+      L.base.width = L.canvas.width;
+      L.base.height = L.canvas.height;
+      L.bctx.drawImage(L.canvas, 0, 0);
+      L.baseEmpty = false;
+    }
+    state.basePaper = state.paper;
+    for (let i = drop; i <= state.index; i++) paintOp(state.ops[i]);
 
     state.ops.splice(0, drop);
     state.index = Math.max(-1, state.index - drop);
   }
 
   function pushOp(op) {
+    if (LAYER_OPS.has(op.type) && op.layer == null) op.layer = active.id;
     if (state.index < state.ops.length - 1) state.ops.length = state.index + 1;
     state.ops.push(op);
     state.index = state.ops.length - 1;
@@ -490,24 +755,34 @@
   function clearAll() {
     if (state.pointerId !== null) return;
     commitText();
-    clearBoard();
+    layers.forEach(clearLayer);
     clearPreview();
     pushOp({ type: 'clear' });
     toast('전체 지우기 — 실행 취소로 되돌릴 수 있어요');
+  }
+
+  /** 그림 전체(모든 레이어)를 바꾸는 연산: 먼저 그리고 나서 기록한다. */
+  function applyXform(op) {
+    if (state.pointerId !== null) return;
+    commitText();
+    op.type = 'xform';
+    paintOp(op);
+    pushOp(op);
+  }
+
+  function changePaper(color) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(color) || color.toLowerCase() === state.paper) return;
+    const op = { type: 'bg', color: color.toLowerCase() };
+    paintOp(op);
+    pushOp(op);
   }
 
   // ── PNG 저장 / 공유 ───────────────────────────────────
   /** 흰 배경 위에 합성한 PNG Blob을 만든다. */
   function renderPNG() {
     return new Promise((resolve) => {
-      if (!board.width || !board.height) { resolve(null); return; }
-      const out = document.createElement('canvas');
-      out.width = board.width;
-      out.height = board.height;
-      const octx = out.getContext('2d');
-      octx.fillStyle = PAPER;                    // 투명 대신 배경색을 깔아 PNG에 유지
-      octx.fillRect(0, 0, out.width, out.height);
-      octx.drawImage(board, 0, 0);
+      if (!preview.width || !preview.height) { resolve(null); return; }
+      const out = composite();                   // 투명 대신 배경색을 깔아 PNG에 유지
       if (out.toBlob) out.toBlob(resolve, 'image/png');
       else resolve(null);
     });
@@ -578,14 +853,14 @@
       toast('사진을 열지 못했어요');
       return;
     }
-    const cssW = board.width / state.dpr;
-    const cssH = board.height / state.dpr;
+    const cw = cssW();
+    const ch = cssH();
     const iw = img.naturalWidth || img.width;
     const ih = img.naturalHeight || img.height;
-    if (!iw || !ih || !cssW || !cssH) return;
+    if (!iw || !ih || !cw || !ch) return;
 
     // 캔버스 안에 비율을 유지해 가운데 맞춤 (확대는 하지 않음)
-    const fit = Math.min(cssW / iw, cssH / ih, 1);
+    const fit = Math.min(cw / iw, ch / ih, 1);
     const w = iw * fit;
     const h = ih * fit;
 
@@ -597,7 +872,7 @@
     sctx.imageSmoothingQuality = 'high';
     sctx.drawImage(img, 0, 0, src.width, src.height);
 
-    const op = { type: 'image', src, x: (cssW - w) / 2, y: (cssH - h) / 2, w, h };
+    const op = { type: 'image', src, x: (cw - w) / 2, y: (ch - h) / 2, w, h };
     drawImageOp(ctx, op);
     pushOp(op);
     toast('사진을 불러왔어요 — 위에 그려 보세요');
@@ -627,7 +902,7 @@
     pctx.font = textFont(textEdit.size);
     const w = pctx.measureText(textEditor.value || '가나').width;
     pctx.restore();
-    const maxW = board.width / state.dpr - textEdit.x;
+    const maxW = cssW() - textEdit.x;
     textEditor.style.width = `${Math.max(24, Math.min(maxW, w + textFontSize(textEdit.size)))}px`;
   }
 
@@ -654,30 +929,52 @@
   }
 
   // ── 스포이트 ──────────────────────────────────────────
-  /** 그림의 한 픽셀 색을 흰 종이 위에 놓인 색으로 읽는다. */
+  /** 그림의 한 픽셀 색을 화면에 보이는 색으로 읽는다. */
   function pickColorAt(p) {
     const sx = Math.floor(p.x * state.dpr);
     const sy = Math.floor(p.y * state.dpr);
-    if (sx < 0 || sy < 0 || sx >= board.width || sy >= board.height) return;
-    const d = ctx.getImageData(sx, sy, 1, 1).data;
-    const a = d[3] / 255;
-    const ch = (v) => Math.round(v * a + 255 * (1 - a)).toString(16).padStart(2, '0');
-    setColor(`#${ch(d[0])}${ch(d[1])}${ch(d[2])}`);
+    if (sx < 0 || sy < 0 || sx >= preview.width || sy >= preview.height) return;
+    // 보이는 그대로(모든 레이어 + 배경색)의 색을 읽는다.
+    const d = composite(sx, sy, 1, 1).getContext('2d').getImageData(0, 0, 1, 1).data;
+    setColor(toHex(d[0], d[1], d[2]));
   }
 
   // ── 입력 처리 ─────────────────────────────────────────
   function pointFromEvent(e) {
-    const rect = board.getBoundingClientRect();
+    const rect = board.getBoundingClientRect();   // 확대 중이면 배율만큼 커진 크기
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: (e.clientX - rect.left) / state.zoom,
+      y: (e.clientY - rect.top) / state.zoom,
       p: e.pointerType === 'pen' ? (e.pressure > 0 ? e.pressure : 0.5) : null,
     };
+  }
+
+  function cropRect() {
+    const x1 = Math.max(0, Math.min(state.start.x, state.end.x));
+    const y1 = Math.max(0, Math.min(state.start.y, state.end.y));
+    const x2 = Math.min(cssW(), Math.max(state.start.x, state.end.x));
+    const y2 = Math.min(cssH(), Math.max(state.start.y, state.end.y));
+    return { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
   }
 
   function drawPreview() {
     clearPreview();
     if (!state.start || !state.end) return;
+    if (state.tool === 'crop') {
+      const r = cropRect();
+      pctx.save();
+      pctx.fillStyle = 'rgba(15, 23, 42, .45)';
+      pctx.beginPath();
+      pctx.rect(0, 0, cssW(), cssH());
+      pctx.rect(r.x, r.y, r.w, r.h);
+      pctx.fill('evenodd');
+      pctx.setLineDash([6, 4]);
+      pctx.strokeStyle = '#ffffff';
+      pctx.lineWidth = 1.5;
+      pctx.strokeRect(r.x, r.y, r.w, r.h);
+      pctx.restore();
+      return;
+    }
     drawShape(pctx, {
       type: 'shape',
       tool: state.tool,
@@ -693,8 +990,8 @@
   function addPoint(clientX, clientY, rect, pressure) {
     const last = state.points[state.points.length - 1];
     if (!last) return;
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const x = (clientX - rect.left) / state.zoom;
+    const y = (clientY - rect.top) / state.zoom;
     const dx = x - last.x;
     const dy = y - last.y;
     if (dx * dx + dy * dy < 0.36) return;      // 0.6px 미만 움직임은 건너뜀
@@ -732,19 +1029,37 @@
     const pos = new Map();
     pos.set(state.pointerId, { x: state.downClient.x, y: state.downClient.y });
     pos.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    gesture = { pos, max: 2, start: state.downAt, moved: false };
+    gesture = { pos, cur: new Map(pos), max: 2, start: state.downAt, moved: false };
     abortCurrent();
   }
 
+  /** 두 손가락의 가운데와 거리 */
+  function pinchInfo() {
+    const [a, b] = gesture.cur.values();
+    if (!a || !b) return null;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+  }
+
+  // 두 손가락을 움직이면 탭 대신 확대/축소(벌리기·오므리기)와 화면 이동
   function gestureMove(e) {
     const o = gesture.pos.get(e.pointerId);
     if (!o) return;
     if (Math.hypot(e.clientX - o.x, e.clientY - o.y) > TAP_MOVE) gesture.moved = true;
+    const before = pinchInfo();
+    gesture.cur.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const after = pinchInfo();
+    if (!gesture.moved || !before || !after) return;
+    const r = stage.getBoundingClientRect();
+    setZoom(state.zoom * (after.d / before.d), after.x - r.left, after.y - r.top);
+    state.panX += after.x - before.x;
+    state.panY += after.y - before.y;
+    applyView();
   }
 
   function gestureEnd(e, cancelled) {
     if (!gesture.pos.has(e.pointerId)) return;
     gesture.pos.delete(e.pointerId);
+    gesture.cur.delete(e.pointerId);
     if (cancelled) gesture.moved = true;
     if (gesture.pos.size) return;
     const g = gesture;
@@ -769,6 +1084,7 @@
       if (gesture) {                                           // 세 번째 손가락
         e.preventDefault();
         gesture.pos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        gesture.cur.set(e.pointerId, { x: e.clientX, y: e.clientY });
         gesture.max = Math.max(gesture.max, gesture.pos.size);
         return;
       }
@@ -896,7 +1212,7 @@
     const p = state.start;
     if (!p) return;
     if (state.tool === 'fill') {
-      if (floodFill(p.x, p.y, state.color)) pushOp({ type: 'fill', x: p.x, y: p.y, color: state.color });
+      if (floodFill(active, p.x, p.y, state.color)) pushOp({ type: 'fill', x: p.x, y: p.y, color: state.color });
       else toast('이미 같은 색이에요');
     } else if (state.tool === 'picker') {
       toast(`색을 골랐어요 ${state.color}`);
@@ -916,6 +1232,16 @@
 
     if (TAP_TOOLS.has(state.tool)) {
       finishTapTool();
+    } else if (state.tool === 'crop') {
+      clearPreview();
+      const r = state.start && state.end ? cropRect() : null;
+      if (r && r.w >= 8 && r.h >= 8) {
+        resetPointer();
+        applyXform({ kind: 'crop', x: r.x, y: r.y, w: r.w, h: r.h });
+        toast('잘랐어요 — 실행 취소로 되돌릴 수 있어요');
+      } else {
+        toast('남길 영역을 끌어서 고르세요');
+      }
     } else if (SHAPE_TOOLS.has(state.tool)) {
       clearPreview();
       const moved = state.start && state.end
@@ -1005,10 +1331,11 @@
     shapeFillBtn.setAttribute('aria-pressed', String(state.fillShape));
   }
 
-  function setColor(hex) {
+  function setColor(hex, from) {
     if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
     state.color = hex.toLowerCase();
     colorInput.value = state.color;
+    colorBtn.style.setProperty('--cur', state.color);
     for (const sw of swatchWrap.querySelectorAll('button[data-color]')) {
       sw.classList.toggle('is-active', sw.dataset.color === state.color);
     }
@@ -1016,8 +1343,42 @@
       textEdit.color = state.color;
       textEditor.style.color = state.color;
     }
+    syncColorUI(from);
     updateSizeDot();
   }
+
+  // ── 색상 창: HEX · RGB · HSV ─────────────────────────
+  const hsv = { h: 0, s: 0, v: 0 };   // 채도 0일 때도 색상(H)을 잃지 않도록 따로 보관
+
+  function syncColorUI(from) {
+    const rgb = hexToRgb(state.color);
+    if (from !== 'hsv') Object.assign(hsv, rgbToHsv(rgb.r, rgb.g, rgb.b));
+    const vals = { ...rgb, ...hsv };
+    for (const input of colorSliders.querySelectorAll('input[data-ch]')) {
+      input.value = String(vals[input.dataset.ch]);
+      input.nextElementSibling.textContent = String(vals[input.dataset.ch]);
+    }
+    if (from !== 'hex') hexInput.value = state.color;
+    colorPreview.style.background = state.color;
+  }
+
+  colorSliders.addEventListener('input', (e) => {
+    const ch = e.target.dataset && e.target.dataset.ch;
+    if (!ch) return;
+    const v = (k) => Number(colorSliders.querySelector(`[data-ch="${k}"]`).value);
+    if ('rgb'.includes(ch)) {
+      setColor(toHex(v('r'), v('g'), v('b')), 'rgb');
+    } else {
+      Object.assign(hsv, { h: v('h'), s: v('s'), v: v('v') });
+      const c = hsvToRgb(hsv.h, hsv.s, hsv.v);
+      setColor(toHex(c.r, c.g, c.b), 'hsv');
+    }
+  });
+
+  hexInput.addEventListener('input', () => {
+    const m = hexInput.value.trim().match(/^#?([0-9a-fA-F]{6})$/);
+    if (m) setColor(`#${m[1]}`, 'hex');
+  });
 
   function updateSizeDot() {
     const t = TOOLS[state.tool];
@@ -1106,6 +1467,119 @@
     importImage(file);
   });
 
+  // ── 색상 창 · 편집 창 ─────────────────────────────────
+  function openDialog(d) {
+    commitText();
+    if (typeof d.showModal === 'function') d.showModal();
+    else d.setAttribute('open', '');
+  }
+  for (const d of [colorDialog, editDialog]) {
+    d.addEventListener('click', (e) => {
+      if (e.target === d || e.target.closest('[data-close]')) d.close();   // 바깥(배경)을 누르거나 닫기
+    });
+  }
+  colorBtn.addEventListener('click', () => { syncColorUI(); openDialog(colorDialog); });
+  editBtn.addEventListener('click', () => { fillResizeFields(); openDialog(editDialog); });
+
+  // 크기 조정: 픽셀이면 현재 캔버스 크기, 비율이면 100%가 기준
+  const resizeBase = () => (resizeUnit.value === 'px' ? [cssW(), cssH()] : [100, 100]);
+  function fillResizeFields() {
+    const [w, h] = resizeBase();
+    resizeW.value = String(Math.round(w));
+    resizeH.value = String(Math.round(h));
+  }
+  resizeUnit.addEventListener('change', fillResizeFields);
+  resizeW.addEventListener('input', () => {
+    if (!resizeLock.checked) return;
+    const [w, h] = resizeBase();
+    resizeH.value = String(Math.round((Number(resizeW.value) * h) / w));
+  });
+  resizeH.addEventListener('input', () => {
+    if (!resizeLock.checked) return;
+    const [w, h] = resizeBase();
+    resizeW.value = String(Math.round((Number(resizeH.value) * w) / h));
+  });
+  function applyResize() {
+    const [w, h] = resizeBase();
+    const sx = Number(resizeW.value) / w;
+    const sy = Number(resizeH.value) / h;
+    if (!(sx > 0 && sy > 0 && sx <= 10 && sy <= 10)) { toast('크기를 확인해 주세요 (최대 10배)'); return; }
+    if (sx === 1 && sy === 1) return;
+    applyXform({ kind: 'scale', sx, sy });
+    toast(`크기를 ${Math.round(sx * 100)}% × ${Math.round(sy * 100)}%로 바꿨어요`);
+  }
+
+  const EDIT_ACTIONS = {
+    'zoom-in': () => setZoom(state.zoom * 1.25),
+    'zoom-out': () => setZoom(state.zoom / 1.25),
+    'zoom-reset': () => setZoom(1),
+    'rot-left': () => applyXform({ kind: 'rotate', dir: -1 }),
+    'rot-right': () => applyXform({ kind: 'rotate', dir: 1 }),
+    'flip-x': () => applyXform({ kind: 'flipX' }),
+    'flip-y': () => applyXform({ kind: 'flipY' }),
+    crop: () => { editDialog.close(); setTool('crop'); toast('남길 영역을 끌어서 고르세요'); },
+    resize: applyResize,
+    'layer-add': addLayer,
+  };
+  editDialog.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (btn && EDIT_ACTIONS[btn.dataset.act]) EDIT_ACTIONS[btn.dataset.act]();
+  });
+  bgInput.addEventListener('change', () => changePaper(bgInput.value));
+
+  // 레이어 목록: 고르기·보이기·투명도·순서·삭제
+  layerList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    const row = e.target.closest('.layer-row');
+    if (!btn || !row) return;
+    const L = layerById(Number(row.dataset.id));
+    if (!L) return;
+    const act = btn.dataset.act;
+    if (act === 'select') selectLayer(L);
+    else if (act === 'up') moveLayer(L, 1);
+    else if (act === 'down') moveLayer(L, -1);
+    else if (act === 'del') deleteLayer(L);
+  });
+  layerList.addEventListener('input', (e) => {
+    const row = e.target.closest('.layer-row');
+    const L = row && layerById(Number(row.dataset.id));
+    if (!L) return;
+    if (e.target.dataset.act === 'opacity') {
+      L.opacity = Number(e.target.value) / 100;
+      L.canvas.style.opacity = String(L.opacity);
+    } else if (e.target.dataset.act === 'visible') {
+      L.visible = e.target.checked;
+      L.canvas.hidden = !L.visible;
+    }
+  });
+
+  // 화면 테마: 자동(기기 설정) / 밝게 / 어둡게 — 그림이 아니라 보기 설정만 기억한다.
+  function applyTheme(v) {
+    if (v === 'light' || v === 'dark') document.documentElement.dataset.theme = v;
+    else delete document.documentElement.dataset.theme;
+  }
+  try { themeSelect.value = localStorage.getItem('paint-app-theme') || 'auto'; } catch (_) { /* 무시 */ }
+  applyTheme(themeSelect.value);
+  themeSelect.addEventListener('change', () => {
+    applyTheme(themeSelect.value);
+    try { localStorage.setItem('paint-app-theme', themeSelect.value); } catch (_) { /* 무시 */ }
+  });
+
+  // 확대 중 표시 — 누르면 100%로
+  zoomBadge.addEventListener('click', () => setZoom(1));
+  // PC: Ctrl+휠 확대/축소, 휠 = 확대한 화면 이동
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) {
+      setZoom(state.zoom * Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
+    } else {
+      state.panX -= e.shiftKey ? e.deltaY : e.deltaX;
+      state.panY -= e.shiftKey ? 0 : e.deltaY;
+      applyView();
+    }
+  }, { passive: false });
+
   // 그림을 저장하지 않고 나가려 하면 한 번 묻는다.
   window.addEventListener('beforeunload', (e) => {
     if (!state.dirty || state.index < 0) return;
@@ -1115,8 +1589,8 @@
 
   // ── 키보드 단축키 ─────────────────────────────────────
   const KEY_TOOLS = {
-    b: 'pen', h: 'highlighter', e: 'eraser', l: 'line',
-    r: 'rect', o: 'ellipse', g: 'fill', t: 'text', i: 'picker',
+    b: 'pen', u: 'brush', p: 'pencil', h: 'highlighter', e: 'eraser', l: 'line',
+    r: 'rect', o: 'ellipse', g: 'fill', t: 'text', i: 'picker', c: 'crop',
   };
 
   window.addEventListener('keydown', (e) => {
@@ -1137,6 +1611,9 @@
 
     if (!meta && KEY_TOOLS[key]) { setTool(KEY_TOOLS[key]); return; }
     if (!meta && key === 'f') { shapeFillBtn.click(); return; }
+    if (!meta && (key === '+' || key === '=')) { setZoom(state.zoom * 1.25); return; }
+    if (!meta && key === '-') { setZoom(state.zoom / 1.25); return; }
+    if (!meta && key === '0') { setZoom(1); return; }
 
     if (!meta && (key === '[' || key === ']')) {
       setSize(state.size + (key === ']' ? 1 : -1));
@@ -1148,6 +1625,8 @@
   document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
 
   // ── 초기화 ────────────────────────────────────────────
+  addLayer();
+  setPaper(state.paper);
   setTool('pen');
   setFillShape(false);
   setColor(state.color);

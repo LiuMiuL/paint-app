@@ -15,6 +15,38 @@
   --hover: #e7ebf2;
   --shadow: 0 10px 30px rgba(15, 23, 42, .10);
   --radius: 16px;
+  --disabled: #c3cad6;
+  color-scheme: light;
+}
+
+/* 다크 모드: 화면 테두리만 어둡게, 그림 종이(배경색)는 그대로 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141c;
+    --paper: #1a212c;
+    --ink: #e5e9f0;
+    --muted: #94a3b8;
+    --line: #2b3442;
+    --accent: #60a5fa;
+    --accent-soft: #1e3a5f;
+    --hover: #243041;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    --disabled: #475163;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141c;
+  --paper: #1a212c;
+  --ink: #e5e9f0;
+  --muted: #94a3b8;
+  --line: #2b3442;
+  --accent: #60a5fa;
+  --accent-soft: #1e3a5f;
+  --hover: #243041;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  --disabled: #475163;
+  color-scheme: dark;
 }
 
 html, body { height: 100%; }
@@ -105,11 +137,11 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 
 .icon-btn:hover { background: var(--hover); }
 .icon-btn:active { transform: scale(.94); }
-.icon-btn:disabled { color: #c3cad6; background: transparent; cursor: default; }
+.icon-btn:disabled { color: var(--disabled); background: transparent; cursor: default; }
 .icon-btn svg { width: 21px; height: 21px; }
 
 .icon-btn.primary {
-  background: var(--accent);
+  background: #2563eb;
   color: #fff;
   box-shadow: 0 4px 12px rgba(37, 99, 235, .32);
 }
@@ -121,7 +153,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   flex: 1 1 auto;
   min-height: 0;
   margin: 0 10px;
-  background: var(--paper);
+  background: #ffffff;   /* 그림 배경색 — app.js 가 배경색 연산에 맞춰 바꾼다 */
   border-radius: var(--radius);
   box-shadow: var(--shadow), 0 0 0 1px rgba(15, 23, 42, .04);
   overflow: hidden;
@@ -136,8 +168,27 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   display: block;
 }
 
-#board { touch-action: none; cursor: crosshair; }
-#preview { pointer-events: none; }
+/* 확대/축소·이동은 wrap 하나에 transform 으로 준다 (그림 좌표는 그대로) */
+.wrap, .layers { position: absolute; inset: 0; }
+.wrap { transform-origin: 0 0; }
+.layer { pointer-events: none; }
+#preview { touch-action: none; cursor: crosshair; }
+
+.zoom-badge {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 15;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .78);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 
 /* 글자 도구 입력칸: 누른 지점에 바로 뜨고, 확정하면 캔버스에 그려진다 */
 .text-editor {
@@ -151,6 +202,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   outline: 1.5px dashed var(--accent);
   outline-offset: 2px;
   background: rgba(255, 255, 255, .55);
+  color-scheme: light;
   -webkit-user-select: text;
   user-select: text;
 }
@@ -223,20 +275,37 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   }
 }
 
-.color-chip input {
+.color-chip { border: 0; }
+.color-chip span {
+  width: 100%;
+  height: 100%;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--cur, #111827);
+}
+
+/* 기기 색 선택기 (색 고르기·배경색 창) */
+.native-color {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.native-color input {
   width: 100%;
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: 50%;
   background: transparent;
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
 }
-.color-chip input::-webkit-color-swatch-wrapper { padding: 0; }
-.color-chip input::-webkit-color-swatch { border: 2px solid #fff; border-radius: 50%; }
-.color-chip input::-moz-color-swatch { border: 2px solid #fff; border-radius: 50%; }
+.native-color input::-webkit-color-swatch-wrapper { padding: 0; }
+.native-color input::-webkit-color-swatch { border: 0; border-radius: 50%; }
+.native-color input::-moz-color-swatch { border: 0; border-radius: 50%; }
 
 .size-control {
   display: flex;
@@ -297,16 +366,22 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 }
 
 /* ── 도구바 ───────────────────────────────────────────── */
+/* 도구가 많아 좁은 화면에서는 옆으로 밀어서 본다 (라벨이 잘리지 않도록 칸 최소 폭 유지) */
 .toolbar {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(50px, 1fr);
   gap: 2px;
   width: 100%;
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 4px 6px calc(6px + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
+.toolbar::-webkit-scrollbar { display: none; }
 
 .tool {
   display: flex;
@@ -357,6 +432,106 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ── 색 고르기 · 편집 창 (열려 있는 동안만 화면을 덮는 시트) ── */
+.sheet {
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+  overflow: auto;
+}
+.sheet::backdrop { background: rgba(15, 23, 42, .4); }
+.sheet-body { padding: 8px 16px 18px; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.sheet-head h2 { margin: 0; font-size: 16px; }
+.group-label { margin: 14px 0 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.group-label small, .sheet small { font-weight: 500; color: var(--muted); font-size: 11.5px; }
+
+.btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+}
+.chip-btn:hover { background: var(--hover); }
+.chip-btn.primary { background: #2563eb; border-color: transparent; color: #fff; }
+.sheet select, .sheet input[type="number"], .sheet input[type="text"] {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.sheet input[type="number"] { width: 76px; }
+.check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+
+.color-top { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.color-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .16);
+}
+.field { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.field input { width: 96px; font-family: ui-monospace, Consolas, monospace !important; }
+.sliders label {
+  display: grid;
+  grid-template-columns: 18px 1fr 36px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sliders input[type="range"] { width: 100%; accent-color: var(--accent); }
+.sliders output { text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.layer-list { display: grid; gap: 4px; margin-bottom: 6px; }
+.layer-row {
+  display: grid;
+  grid-template-columns: minmax(56px, 1fr) auto minmax(40px, 1fr) repeat(3, 26px);
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.layer-row.is-active { border-color: var(--accent); background: var(--accent-soft); }
+.layer-name {
+  height: 30px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.layer-vis { display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.layer-row input[type="range"] { width: 100%; min-width: 0; accent-color: var(--accent); }
+.mini-btn {
+  width: 26px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+}
+.mini-btn:hover { background: var(--hover); }
+
 noscript {
   position: fixed;
   inset: 0;
@@ -393,6 +568,9 @@ noscript {
 }
 
 @media (max-width: 400px) {
+  .brand { display: none; }   /* 상단 버튼이 한 줄에 들어가도록 */
+  .layer-vis { font-size: 0; }   /* 레이어 이름이 보이도록 '보이기' 글자는 숨김 (aria-label 유지) */
+  .actions { margin-left: auto; }
   .tool { font-size: 9.5px; letter-spacing: -.5px; }
   .toolbar { padding-left: 4px; padding-right: 4px; gap: 1px; }
   .actions { gap: 2px; }
