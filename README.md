@@ -56,7 +56,24 @@
 | `Ctrl+Delete` | 전체 지우기 |
 | `[` / `]` | 굵기 1씩 줄이기 / 늘리기 |
 
-## 설치(PWA)
+## 안드로이드 앱 (권장)
+
+주소(링크) 없이 폰에 설치해서 쓰는 앱입니다. 그림판 파일이 앱 안에 들어 있어 인터넷이 없어도 열립니다.
+
+**수정 → 폰에 반영하는 방법**
+
+1. 프로젝트 루트의 `index.html` / `app.js` / `styles.css`를 고칩니다.
+2. 폰을 USB로 연결합니다(개발자 옵션 → USB 디버깅 켜기).
+3. `android\install.cmd`를 더블클릭합니다. 빌드 → 설치 → 실행까지 자동으로 진행됩니다.
+   - 명령줄: `powershell -ExecutionPolicy Bypass -File androiduild.ps1 -Install`
+   - 설치 없이 APK만 만들 때: `-Install`을 빼면 `androiduild\paint-app.apk`가 생깁니다.
+
+- 필요한 것: JDK 11 이상, Android SDK(build-tools, platforms, platform-tools). Gradle·npm은 쓰지 않습니다. SDK 위치는 `ANDROID_HOME` → 없으면 `D:\Miu\Toolsndroid-sdk`.
+- 저장 버튼은 갤러리의 `사진/그림판` 폴더에 저장하고, 공유 버튼은 안드로이드 공유 창을 엽니다.
+- 서명 키(`android\paint-app.keystore`)는 첫 빌드 때 이 PC에 만들어지고 Git에는 올라가지 않습니다. 키를 잃어버리면 폰에서 앱을 지운 뒤 다시 설치해야 합니다.
+- 앱 버전 이름은 `sw.js`의 `VERSION`을 따릅니다.
+
+## 설치(PWA, 브라우저)
 
 - **Android(Chrome)**: 주소를 연 뒤 메뉴 → "앱 설치" 또는 "홈 화면에 추가"
 - **iPhone(Safari)**: 공유 → "홈 화면에 추가"
@@ -76,6 +93,11 @@ icon-192.png            아이콘
 icon-512.png            아이콘
 icon-512-maskable.png   마스크용 아이콘
 tools/make_icons.py     아이콘 생성 스크립트 (Pillow)
+android/                안드로이드 앱 (WebView 껍데기)
+  AndroidManifest.xml   앱 설정 (이름·아이콘·화면 회전 처리)
+  src/…/MainActivity.java  웹 파일을 띄우고 사진 고르기·갤러리 저장·공유를 연결
+  build.ps1             빌드(+ -Install 이면 폰 설치) 스크립트
+  install.cmd           더블클릭용: 빌드 후 폰에 설치
 ```
 
 ## 동작 원리

@@ -1,0 +1,3 @@
+# 안드로이드 앱 빌드 결과와 서명 키 (키는 이 PC에만 보관)
+android/build/
+android/*.keystore

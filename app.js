@@ -788,10 +788,28 @@
     });
   }
 
+  // 안드로이드 앱(android/) 안에서 실행 중일 때만 있는 연결 — 갤러리 저장·공유를 맡는다.
+  const nativeApp = window.PaintApp;
+
+  function blobToBase64(blob) {
+    return new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => resolve('');
+      r.readAsDataURL(blob);
+    });
+  }
+
   async function savePNG() {
     commitText();
     const blob = await renderPNG();
     if (!blob) { toast('저장에 실패했어요'); return; }
+    if (nativeApp) {
+      const ok = nativeApp.savePng(await blobToBase64(blob), `그림판_${stamp()}.png`);
+      if (ok) state.dirty = false;
+      toast(ok ? '갤러리(사진/그림판)에 저장했어요' : '저장에 실패했어요');
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -807,6 +825,7 @@
 
   // 휴대폰 공유 시트(카톡·메시지·갤러리 등)로 바로 보내기
   function canShareFiles() {
+    if (nativeApp) return true;
     try {
       return typeof navigator.share === 'function'
         && typeof navigator.canShare === 'function'
@@ -821,6 +840,11 @@
     commitText();
     const blob = await renderPNG();
     if (!blob) { toast('이미지를 만들지 못했어요'); return; }
+    if (nativeApp) {
+      if (nativeApp.sharePng(await blobToBase64(blob), `그림판_${stamp()}.png`)) state.dirty = false;
+      else toast('공유하지 못했어요');
+      return;
+    }
     const file = new File([blob], `그림판_${stamp()}.png`, { type: 'image/png' });
     try {
       await navigator.share({ files: [file], title: '그림판' });

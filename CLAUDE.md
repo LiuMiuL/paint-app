@@ -18,6 +18,7 @@
 | `manifest.webmanifest` | PWA 설정 (이름, 아이콘, 테마 색) |
 | `tools/make_icons.py` | 아이콘 생성 (Pillow) |
 | `README.md` | 사용자용 설명. 기능이 바뀌면 함께 갱신 |
+| `android/` | 안드로이드 앱 껍데기(WebView). `build.ps1 -Install`로 루트의 웹 파일을 APK에 넣어 폰에 설치. 웹 파일을 추가하면 `build.ps1`의 `$web` 목록에도 추가 |
 
 ## app.js 구조
 
@@ -80,6 +81,8 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 - 모바일에서 스크롤·확대가 끼어들지 않도록 캔버스에 `touch-action: none`을 유지합니다.
 - `sw.js`의 캐시 목록에 새 파일을 추가하고, 캐시 전략을 바꾸면 `VERSION`을 올리세요.
 - 파일을 추가·삭제하면 README의 파일 구조 표도 갱신합니다.
+
+- 안드로이드 앱 안에서는 `window.PaintApp`(savePng/sharePng)이 있습니다. 저장·공유를 바꾸면 이 경로도 확인하세요.
 
 ## 하지 말 것
 
