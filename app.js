@@ -30,6 +30,8 @@
   const shareBtn = document.getElementById('shareBtn');
   const shapeFillBtn = document.getElementById('shapeFillBtn');
   const textEditor = document.getElementById('textEditor');
+  const canvasWrap = document.getElementById('canvasWrap');
+  const zoomBtn = document.getElementById('zoomBtn');
 
   const ctx = board.getContext('2d', { willReadFrequently: true });
   const pctx = preview.getContext('2d');
@@ -43,6 +45,10 @@
   const MAX_DPR = 3;
   const TAP_MS = 350;              // 두 손가락 탭으로 인정할 두 번째 손가락 도착 시간
   const TAP_MOVE = 18;             // 두 손가락 탭 중 허용 이동 거리(px)
+  const HOLD_MS = 500;             // 이만큼 가만히 누르고 있으면 스포이트
+  const HOLD_MOVE = 8;             // 길게 누르기로 인정할 최대 이동 거리(px)
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 6;
   const FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif';
 
   const PALETTE = [
@@ -89,7 +95,13 @@
     prevTool: 'pen',  // 스포이트 사용 후 돌아갈 도구
     pickColorBefore: null,
     dirty: false,     // 저장 이후 바뀐 내용이 있는지
+    lastClient: null, // 현재 포인터의 마지막 화면 좌표
+    holdTimer: 0,     // 길게 눌러 스포이트 타이머
+    holdPick: false,  // 길게 눌러 색을 고르는 중
   };
+
+  // 보기 배율·이동 (화면 표시만 바꾼다. 그림 좌표·연산은 그대로)
+  const view = { z: 1, x: 0, y: 0 };
 
   // 히스토리에서 밀려난 오래된 연산을 굳혀 두는 바탕 그림 (기기 픽셀 단위)
   const base = document.createElement('canvas');
@@ -151,6 +163,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     state.lastMid = null;
+    applyView();
   }
 
   /** 캔버스 크기를 바꾸면서 기존 비트맵을 같은 배율로 되살린다. */
@@ -183,6 +196,40 @@
   }
   window.addEventListener('resize', scheduleResize);
   window.addEventListener('orientationchange', scheduleResize);
+
+  // ── 확대·이동 ──────────────────────────────────────────
+  /** 배율·이동을 허용 범위로 맞추고 화면에 반영한다. (캔버스가 늘 stage 를 덮도록) */
+  function applyView() {
+    const w = stage.clientWidth;
+    const h = stage.clientHeight;
+    view.z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.z));
+    if (view.z < 1.02) view.z = 1;
+    view.x = Math.min(0, Math.max(w - w * view.z, view.x));
+    view.y = Math.min(0, Math.max(h - h * view.z, view.y));
+    canvasWrap.style.transform = view.z === 1 ? '' : `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
+    zoomBtn.hidden = view.z === 1;
+    zoomBtn.textContent = `${Math.round(view.z * 100)}%`;
+  }
+
+  /** 그림 좌표 (ax, ay)가 stage 기준 화면 좌표 (sx, sy)에 오도록 배율 z로 맞춘다. */
+  function zoomAround(ax, ay, sx, sy, z) {
+    view.z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+    view.x = sx - ax * view.z;
+    view.y = sy - ay * view.z;
+    applyView();
+  }
+
+  function resetView() {
+    view.z = 1;
+    view.x = 0;
+    view.y = 0;
+    applyView();
+  }
+
+  /** 화면 좌표 → 그림(CSS 픽셀) 좌표. rect 는 확대가 반영된 board 의 사각형 */
+  function toCanvas(clientX, clientY, rect) {
+    return { x: (clientX - rect.left) / view.z, y: (clientY - rect.top) / view.z };
+  }
 
   // ── 그리기 기본기 ──────────────────────────────────────
   function applyStyle(c, op) {
@@ -667,10 +714,10 @@
 
   // ── 입력 처리 ─────────────────────────────────────────
   function pointFromEvent(e) {
-    const rect = board.getBoundingClientRect();
+    const { x, y } = toCanvas(e.clientX, e.clientY, board.getBoundingClientRect());
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x,
+      y,
       p: e.pointerType === 'pen' ? (e.pressure > 0 ? e.pressure : 0.5) : null,
     };
   }
@@ -693,8 +740,7 @@
   function addPoint(clientX, clientY, rect, pressure) {
     const last = state.points[state.points.length - 1];
     if (!last) return;
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const { x, y } = toCanvas(clientX, clientY, rect);
     const dx = x - last.x;
     const dy = y - last.y;
     if (dx * dx + dy * dy < 0.36) return;      // 0.6px 미만 움직임은 건너뜀
@@ -721,7 +767,7 @@
   /** 첫 손가락으로 막 시작한 획·도형을 흔적 없이 취소한다. */
   function abortCurrent() {
     const hadStroke = !!state.op;
-    if (state.tool === 'picker' && state.pickColorBefore) setColor(state.pickColorBefore);
+    if ((state.tool === 'picker' || state.holdPick) && state.pickColorBefore) setColor(state.pickColorBefore);
     const id = state.pointerId;
     resetPointer();
     try { board.releasePointerCapture(id); } catch (_) { /* 무시 */ }
@@ -730,21 +776,41 @@
 
   function startGesture(e) {
     const pos = new Map();
-    pos.set(state.pointerId, { x: state.downClient.x, y: state.downClient.y });
+    const first = state.lastClient || state.downClient;
+    pos.set(state.pointerId, { x: first.x, y: first.y });
     pos.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    gesture = { pos, max: 2, start: state.downAt, moved: false };
+    // 두 손가락 가운데 아래의 그림 좌표를 기억해 두고, 벌리고 옮기는 동안 그 점을 손가락 가운데에 붙여 둔다.
+    const r = stage.getBoundingClientRect();
+    const mx = (first.x + e.clientX) / 2 - r.left;
+    const my = (first.y + e.clientY) / 2 - r.top;
+    const pinch = {
+      d0: Math.max(1, Math.hypot(first.x - e.clientX, first.y - e.clientY)),
+      z0: view.z,
+      ax: (mx - view.x) / view.z,
+      ay: (my - view.y) / view.z,
+    };
+    gesture = { pos, cur: new Map(pos), max: 2, start: state.downAt, moved: false, pinch };
     abortCurrent();
   }
 
   function gestureMove(e) {
     const o = gesture.pos.get(e.pointerId);
     if (!o) return;
+    gesture.cur.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (Math.hypot(e.clientX - o.x, e.clientY - o.y) > TAP_MOVE) gesture.moved = true;
+    if (!gesture.moved || gesture.max !== 2 || gesture.cur.size !== 2) return;
+    // 두 손가락으로 벌리기 = 확대, 함께 옮기기 = 이동
+    const [a, b] = [...gesture.cur.values()];
+    const r = stage.getBoundingClientRect();
+    const k = gesture.pinch;
+    zoomAround(k.ax, k.ay, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top,
+      k.z0 * Math.hypot(a.x - b.x, a.y - b.y) / k.d0);
   }
 
   function gestureEnd(e, cancelled) {
     if (!gesture.pos.has(e.pointerId)) return;
     gesture.pos.delete(e.pointerId);
+    gesture.cur.delete(e.pointerId);
     if (cancelled) gesture.moved = true;
     if (gesture.pos.size) return;
     const g = gesture;
@@ -769,6 +835,7 @@
       if (gesture) {                                           // 세 번째 손가락
         e.preventDefault();
         gesture.pos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        gesture.cur.set(e.pointerId, { x: e.clientX, y: e.clientY });
         gesture.max = Math.max(gesture.max, gesture.pos.size);
         return;
       }
@@ -784,11 +851,13 @@
 
     // 글자 입력 중에 캔버스를 누르면 입력을 확정만 한다.
     if (textEdit) { commitText(); return; }
+    clearPreview();   // 굵기 미리보기 원이 남아 있으면 지운다
 
     state.pointerId = e.pointerId;
     state.pointerType = e.pointerType;
     state.downAt = performance.now();
     state.downClient = { x: e.clientX, y: e.clientY };
+    state.lastClient = state.downClient;
     if (e.pointerType === 'pen') state.penDown = true;
     try { board.setPointerCapture(e.pointerId); } catch (_) { /* 무시 */ }
 
@@ -806,6 +875,12 @@
       return;
     }
     if (TAP_TOOLS.has(state.tool)) return;     // 채우기·글자는 손을 뗄 때 실행
+
+    // 손가락·펜으로 가만히 누르고 있으면 그 자리 색을 집는다(지우개 제외).
+    if (e.pointerType !== 'mouse' && state.tool !== 'eraser') {
+      const id = e.pointerId;
+      state.holdTimer = setTimeout(() => startHoldPick(id), HOLD_MS);
+    }
 
     if (SHAPE_TOOLS.has(state.tool)) {
       drawPreview();
@@ -829,11 +904,31 @@
     }
   }
 
+  /** 길게 누르기: 그리던 점·도형을 지우고 그 자리 색을 집는 모드로 바꾼다. */
+  function startHoldPick(id) {
+    state.holdTimer = 0;
+    if (gesture || state.pointerId !== id) return;
+    const hadStroke = !!state.op;
+    state.op = null;
+    state.holdPick = true;
+    state.pickColorBefore = state.color;
+    if (hadStroke) replay(); else clearPreview();
+    pickColorAt(toCanvas(state.lastClient.x, state.lastClient.y, board.getBoundingClientRect()));
+    if (navigator.vibrate) navigator.vibrate(12);
+    toast('스포이트 — 끌어서 색을 고르세요');
+  }
+
   function onPointerMove(e) {
     if (gesture) return;                  // 제스처는 window 에서 처리
     if (state.pointerId !== e.pointerId) return;
+    state.lastClient = { x: e.clientX, y: e.clientY };
+    if (state.holdTimer
+      && Math.hypot(e.clientX - state.downClient.x, e.clientY - state.downClient.y) > HOLD_MOVE) {
+      clearTimeout(state.holdTimer);
+      state.holdTimer = 0;
+    }
 
-    if (state.tool === 'picker') {
+    if (state.tool === 'picker' || state.holdPick) {
       pickColorAt(pointFromEvent(e));
       return;
     }
@@ -914,7 +1009,9 @@
     if (gesture) return;
     if (state.pointerId !== e.pointerId) return;
 
-    if (TAP_TOOLS.has(state.tool)) {
+    if (state.holdPick) {
+      toast(`색을 골랐어요 ${state.color}`);
+    } else if (TAP_TOOLS.has(state.tool)) {
       finishTapTool();
     } else if (SHAPE_TOOLS.has(state.tool)) {
       clearPreview();
@@ -944,6 +1041,7 @@
     if (gesture) return;
     if (state.pointerId !== e.pointerId) return;
     // 캔버스 밖으로 나가거나 제스처가 끼어들어도 그린 것은 남긴다.
+    if (state.holdPick) { resetPointer(); return; }
     if (state.tool === 'picker') {
       const back = state.prevTool;
       resetPointer();
@@ -959,6 +1057,9 @@
   }
 
   function resetPointer() {
+    clearTimeout(state.holdTimer);
+    state.holdTimer = 0;
+    state.holdPick = false;
     state.pointerId = null;
     state.pointerType = '';
     state.penDown = false;
@@ -985,6 +1086,15 @@
   window.addEventListener('pointercancel', (e) => { if (gesture) gestureEnd(e, true); });
   board.addEventListener('contextmenu', (e) => e.preventDefault());
   board.addEventListener('dragstart', (e) => e.preventDefault());
+  // PC: 휠로 마우스 위치를 중심으로 확대·축소
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = stage.getBoundingClientRect();
+    const sx = e.clientX - r.left;
+    const sy = e.clientY - r.top;
+    zoomAround((sx - view.x) / view.z, (sy - view.y) / view.z, sx, sy, view.z * Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+  zoomBtn.addEventListener('click', resetView);
 
   // ── UI 바인딩 ─────────────────────────────────────────
   function setTool(tool) {
@@ -1068,7 +1178,32 @@
     updateSizeDot();
   }
 
-  sizeSlider.addEventListener('input', () => setSize(Number(sizeSlider.value)));
+  /** 굵기를 바꾸는 동안 보이는 화면 가운데에 실제 붓 크기 원을 잠깐 보여 준다. */
+  let sizePreviewTimer = 0;
+  function showSizePreview() {
+    if (state.pointerId !== null || TAP_TOOLS.has(state.tool)) return;
+    const t = TOOLS[state.tool];
+    const cx = (stage.clientWidth / 2 - view.x) / view.z;
+    const cy = (stage.clientHeight / 2 - view.y) / view.z;
+    clearPreview();
+    pctx.save();
+    pctx.beginPath();
+    pctx.arc(cx, cy, Math.max(t.width(state.size) / 2, 0.5), 0, Math.PI * 2);
+    if (state.tool !== 'eraser') {
+      pctx.globalAlpha = t.alpha;
+      pctx.fillStyle = state.color;
+      pctx.fill();
+      pctx.globalAlpha = 1;
+    }
+    pctx.lineWidth = 1 / view.z;
+    pctx.strokeStyle = 'rgba(100, 116, 139, .9)';
+    pctx.stroke();
+    pctx.restore();
+    clearTimeout(sizePreviewTimer);
+    sizePreviewTimer = setTimeout(() => { if (state.pointerId === null) clearPreview(); }, 700);
+  }
+
+  sizeSlider.addEventListener('input', () => { setSize(Number(sizeSlider.value)); showSizePreview(); });
 
   shapeFillBtn.addEventListener('click', () => {
     setFillShape(!state.fillShape);
@@ -1140,7 +1275,10 @@
 
     if (!meta && (key === '[' || key === ']')) {
       setSize(state.size + (key === ']' ? 1 : -1));
+      showSizePreview();
+      return;
     }
+    if (!meta && key === '0') resetView();
   });
 
   // 제스처로 인한 확대/스크롤 방지 (iOS)

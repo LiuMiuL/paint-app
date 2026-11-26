@@ -64,9 +64,12 @@
   </header>
 
   <main class="stage" id="stage">
-    <canvas id="board" aria-label="그림을 그리는 캔버스" role="img"></canvas>
-    <canvas id="preview" aria-hidden="true"></canvas>
-    <input type="text" class="text-editor" id="textEditor" aria-label="넣을 글자" placeholder="글자 입력" enterkeyhint="done" autocomplete="off" spellcheck="false" hidden>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="board" aria-label="그림을 그리는 캔버스" role="img"></canvas>
+      <canvas id="preview" aria-hidden="true"></canvas>
+      <input type="text" class="text-editor" id="textEditor" aria-label="넣을 글자" placeholder="글자 입력" enterkeyhint="done" autocomplete="off" spellcheck="false" hidden>
+    </div>
+    <button type="button" class="zoom-chip" id="zoomBtn" aria-label="원래 크기로 보기" title="원래 크기로 보기 (0)" hidden>100%</button>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </main>
 

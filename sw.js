@@ -3,7 +3,7 @@
    - 네트워크 우선 → 항상 최신 파일을 쓰고, 실패하면 캐시로 대체
    - 파일을 크게 바꿨다면 아래 VERSION을 올려 이전 캐시를 지운다
 */
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 const CACHE = `paint-app-${VERSION}`;
 
 const APP_SHELL = [

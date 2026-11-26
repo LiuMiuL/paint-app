@@ -25,6 +25,7 @@
 상수        PAPER, MAX_HISTORY(80), FILL_TOLERANCE, PALETTE, TOOLS
 state       tool, color, size, dpr, ops[], index, 진행 중 포인터 상태
 캔버스 크기  resizeCanvases() — devicePixelRatio 반영, 크기 변경 시 내용 보존
+확대·이동    view{z,x,y}, applyView, zoomAround, resetView, toCanvas — #canvasWrap 에 CSS transform
 그리기      applyStyle, segWidth, drawDot, drawStroke, drawShape, drawText, drawImageOp
 페인트통    floodFill(x, y, color) — 스캔라인, 픽셀 단위
 히스토리    pushOp, paintOp, replay, undo, redo, trimHistory(오래된 연산 → base 캔버스로 굳힘)
@@ -33,12 +34,14 @@ state       tool, color, size, dpr, ops[], index, 진행 중 포인터 상태
 글자        openTextEditor, commitText, cancelText — #textEditor 입력칸
 스포이트    pickColorAt — 흰 종이 위 색으로 환산
 입력        onPointerDown/Move/Up/Cancel, addPoint, drawPreview,
-            두 손가락 탭 제스처(startGesture, gestureMove, gestureEnd — window에서 받음)
+            두 손가락 탭·핀치 제스처(startGesture, gestureMove, gestureEnd — window에서 받음),
+            길게 눌러 스포이트(startHoldPick), 굵기 미리보기(showSizePreview)
 UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 ```
 
 ### 좌표 규칙 (중요)
 
+- 화면 좌표(clientX/Y)는 반드시 `toCanvas()`로 환산합니다. 보기 확대는 CSS transform이라 그림 좌표에는 영향이 없습니다.
 - 그리기 좌표는 **캔버스의 CSS 픽셀**. 실제 비트맵은 `devicePixelRatio`배이며 `ctx.setTransform(dpr, …)`이 보정합니다.
 - CSS 값을 다시 계산할 때는 `board.getBoundingClientRect()` 기준을 유지하세요.
 - `getImageData`/`putImageData`는 변환의 영향을 받지 않으므로 픽셀 좌표에는 `state.dpr`을 곱합니다.
