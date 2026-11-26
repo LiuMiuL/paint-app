@@ -18,6 +18,7 @@
 | `manifest.webmanifest` | PWA 설정 (이름, 아이콘, 테마 색) |
 | `tools/make_icons.py` | 아이콘 생성 (Pillow) |
 | `README.md` | 사용자용 설명. 기능이 바뀌면 함께 갱신 |
+| `android/` | 안드로이드 앱 껍데기(WebView). `build.ps1 -Install`로 루트의 웹 파일을 APK에 넣어 폰에 설치. 웹 파일을 추가하면 `build.ps1`의 `$web` 목록에도 추가 |
 
 ## app.js 구조
 
@@ -25,7 +26,7 @@
 상수        PAPER, MAX_HISTORY(80), FILL_TOLERANCE, PALETTE, TOOLS
 state       tool, color, size, dpr, ops[], index, 진행 중 포인터 상태
 캔버스 크기  resizeCanvases() — devicePixelRatio 반영, 크기 변경 시 내용 보존
-확대·이동    view{z,x,y}, applyView, zoomAround, resetView, toCanvas — #canvasWrap 에 CSS transform
+확대·이동    state.zoom/panX/panY, applyView, setZoom — #wrap 에 CSS transform
 그리기      applyStyle, segWidth, drawDot, drawStroke, drawShape, drawText, drawImageOp
 페인트통    floodFill(x, y, color) — 스캔라인, 픽셀 단위
 히스토리    pushOp, paintOp, replay, undo, redo, trimHistory(오래된 연산 → base 캔버스로 굳힘)
@@ -41,7 +42,7 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 
 ### 좌표 규칙 (중요)
 
-- 화면 좌표(clientX/Y)는 반드시 `toCanvas()`로 환산합니다. 보기 확대는 CSS transform이라 그림 좌표에는 영향이 없습니다.
+- 화면 좌표(clientX/Y)는 그림 좌표로 바꿀 때 배율 `state.zoom` 으로 나눕니다(`pointFromEvent`, `addPoint`). 보기 확대는 CSS transform이라 그림 좌표에는 영향이 없습니다.
 - 그리기 좌표는 **캔버스의 CSS 픽셀**. 실제 비트맵은 `devicePixelRatio`배이며 `ctx.setTransform(dpr, …)`이 보정합니다.
 - CSS 값을 다시 계산할 때는 `board.getBoundingClientRect()` 기준을 유지하세요.
 - `getImageData`/`putImageData`는 변환의 영향을 받지 않으므로 픽셀 좌표에는 `state.dpr`을 곱합니다.
@@ -55,7 +56,12 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 | `fill` | `x`, `y`, `color` |
 | `text` | `x`, `y`(글줄 왼쪽-세로 가운데), `text`, `color`, `size` |
 | `image` | `src`(캔버스), `x`, `y`, `w`, `h` |
-| `clear` | — |
+| `clear` | — (모든 레이어) |
+| `xform` | `kind`(rotate `dir`±1 / flipX / flipY / scale `sx`,`sy` / crop `x`,`y`,`w`,`h`) — 모든 레이어 |
+| `bg` | `color` — 배경(종이)색 |
+
+- 그리기 연산(stroke/shape/fill/text/image)에는 `pushOp`가 `layer`(레이어 id)를 붙입니다. `paintOp(op)`는 그 레이어 캔버스에 그립니다.
+- 레이어마다 `canvas`+`base`(굳힌 바탕)를 가집니다. 입력과 미리보기는 맨 위 `#preview`가 받고, 확대/축소는 `#wrap`의 CSS transform이므로 포인터 좌표는 `state.zoom`으로 나눕니다.
 
 - 새 기능도 **연산으로 표현**해야 실행 취소가 됩니다. 비트맵을 직접 바꾸고 연산을 남기지 않으면 되돌릴 수 없습니다.
 - 실시간으로 그리는 모양과 `replay()` 결과가 같아야 합니다. `drawStroke`를 실시간 경로에서도 재사용하거나, 같은 순서로 세그먼트를 그리세요.
@@ -66,7 +72,7 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 
 1. `TOOLS`에 `{ label, width, alpha, composite, cursor }` 추가
 2. `index.html` 도구바에 `<button class="tool" data-tool="새도구">` 추가 (아이콘 SVG + 한국어 라벨)
-3. `styles.css` `.toolbar`의 `grid-template-columns: repeat(9, …)` 개수 수정 (360px 폭에서 라벨이 잘리지 않는지 확인)
+3. 툴바는 칸 최소 폭을 지키며 옆으로 스크롤되므로 CSS 수정은 필요 없음 (360px 폭에서 라벨이 잘리지 않는지 확인)
 4. `onPointerDown`/`onPointerUp`에서 그리기 처리, 히스토리 연산은 `paintOp`에 분기 추가
 5. `KEY_TOOLS`에 단축키 등록, README 단축키 표 갱신
 
@@ -78,6 +84,8 @@ UI          setTool, setColor, setSize, setFillShape, updateSizeDot, 단축키
 - 모바일에서 스크롤·확대가 끼어들지 않도록 캔버스에 `touch-action: none`을 유지합니다.
 - `sw.js`의 캐시 목록에 새 파일을 추가하고, 캐시 전략을 바꾸면 `VERSION`을 올리세요.
 - 파일을 추가·삭제하면 README의 파일 구조 표도 갱신합니다.
+
+- 안드로이드 앱 안에서는 `window.PaintApp`(savePng/sharePng)이 있습니다. 저장·공유를 바꾸면 이 경로도 확인하세요.
 
 ## 하지 말 것
 
